@@ -242,3 +242,36 @@ class TestCSVToDocument:
         # Surplus value is preserved under an explicit (non-None) string meta key.
         assert None not in ragged_doc.meta
         assert "state" in ragged_doc.meta["extra_columns"]
+
+    @pytest.mark.parametrize(
+        "bad_mode",
+        [
+            "Rows",  # case typo
+            "FILE",  # case typo
+            "row ",  # trailing whitespace
+            " file",  # leading whitespace
+            "row\n",  # trailing newline
+            "files",  # plural typo
+            "",  # empty string
+        ],
+    )
+    def test_init_rejects_unsupported_conversion_mode(self, bad_mode):
+        """
+        ``conversion_mode`` is typed ``Literal["file", "row"]`` but the previous implementation did
+        not validate it. A typo (or a value loaded from a saved pipeline YAML with a different case
+        or trailing whitespace) was silently accepted and dispatched into the row branch by
+        ``if self.conversion_mode == "file": ... else: <row branch>``, producing one ``Document``
+        per row instead of one per file. ``__init__`` now raises ``ValueError`` for any value
+        outside the two supported literals so the error surfaces at construction time, not deep
+        inside ``run()``.
+        """
+        with pytest.raises(ValueError, match="conversion_mode must be 'file' or 'row'"):
+            CSVToDocument(conversion_mode=bad_mode)
+
+    def test_init_accepts_supported_conversion_modes(self):
+        """
+        Both supported modes construct without error. Locks the new validation against
+        over-rejection of the two literals.
+        """
+        CSVToDocument(conversion_mode="file")
+        CSVToDocument(conversion_mode="row")
