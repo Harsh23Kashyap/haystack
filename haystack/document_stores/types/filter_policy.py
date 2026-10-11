@@ -103,9 +103,39 @@ def combine_two_logical_filters(
         ```
     """
     if init_logical_filter["operator"] == runtime_logical_filter["operator"]:
+        if init_logical_filter["operator"] == "AND":
+            # When both sides are AND, the conditions are merged. If a runtime condition
+            # constrains the same field as an init condition, the runtime value wins — this
+            # matches the docstring contract of ``FilterPolicy.MERGE`` ("values from the
+            # runtime filters will overwrite those from the initial filters") and the
+            # behavior of the other three shape combinations in ``apply_filter_policy``
+            # (which all log a warning and return the runtime value). Nested logical
+            # conditions (no ``field`` key) are not deduplicated and are appended as-is.
+            merged_conditions: list[dict[str, Any]] = list(init_logical_filter["conditions"])
+            for runtime_condition in runtime_logical_filter["conditions"]:
+                if not is_comparison_filter(runtime_condition):
+                    merged_conditions.append(runtime_condition)
+                    continue
+                runtime_field = runtime_condition["field"]
+                for index, init_condition in enumerate(merged_conditions):
+                    if is_comparison_filter(init_condition) and init_condition["field"] == runtime_field:
+                        logger.warning(
+                            "The parsed filter, {parsed_filter}, is ignored as the field is already present "
+                            "in the existing filters, {filters}.",
+                            parsed_filter=init_condition,
+                            filters=runtime_condition,
+                        )
+                        merged_conditions[index] = runtime_condition
+                        break
+                else:
+                    merged_conditions.append(runtime_condition)
+            return {"operator": "AND", "conditions": merged_conditions}
         return {
-            "operator": str(init_logical_filter["operator"]),
-            "conditions": init_logical_filter["conditions"] + runtime_logical_filter["conditions"],
+            "operator": "AND",
+            "conditions": [
+                {**init_logical_filter, "conditions": list(init_logical_filter["conditions"])},
+                {**runtime_logical_filter, "conditions": list(runtime_logical_filter["conditions"])},
+            ],
         }
 
     logger.warning(
